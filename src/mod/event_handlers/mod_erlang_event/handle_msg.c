@@ -1225,7 +1225,6 @@ static switch_status_t handle_ref_tuple(listener_t *listener, erlang_msg * msg, 
 	}
 
 	ei_hash_ref(&ref, hash);
-
 	switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Hashed ref to %s\n", hash);
 
 	switch_thread_rwlock_rdlock(listener->session_rwlock);
@@ -1272,7 +1271,8 @@ static switch_status_t handle_net_kernel_msg(listener_t *listener, erlang_msg * 
 {
 	int version, size, type, arity;
 	char atom[MAXATOMLEN];
-	erlang_ref ref;
+	int ref_start, ref_len = 0;
+	char *ref = NULL;
 	erlang_pid pid;
 
 	buf->index = 0;
@@ -1310,8 +1310,20 @@ static switch_status_t handle_net_kernel_msg(listener_t *listener, erlang_msg * 
 		return SWITCH_STATUS_FALSE;
 	}
 
-	if (ei_decode_pid(buf->buff, &buf->index, &pid) || ei_decode_ref(buf->buff, &buf->index, &ref)) {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "decoding pid and ref error\n");
+	if (!ei_decode_pid(buf->buff, &buf->index, &pid)) {
+		ref_start = buf->index;
+		if (ei_skip_term(buf->buff, &buf->index)) { /* skip the whole tag/ref, is an opaque after all */
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "decoding reference  error\n");
+			return SWITCH_STATUS_FALSE;
+		}
+		ref_len = buf->index - ref_start;
+
+		switch_malloc(ref, ref_len);
+		memcpy(ref, &buf->buff[ref_start], ref_len);
+	}
+	else{
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "decoding pid error\n");
+		switch_safe_free(ref);
 		return SWITCH_STATUS_FALSE;
 	}
 
@@ -1319,6 +1331,7 @@ static switch_status_t handle_net_kernel_msg(listener_t *listener, erlang_msg * 
 
 	if (type != ERL_SMALL_TUPLE_EXT && type != ERL_SMALL_TUPLE_EXT) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "not a tuple\n");
+		switch_safe_free(ref);
 		return SWITCH_STATUS_FALSE;
 	}
 
@@ -1326,18 +1339,21 @@ static switch_status_t handle_net_kernel_msg(listener_t *listener, erlang_msg * 
 
 	if (arity != 2) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "bad arity\n");
+		switch_safe_free(ref);
 		return SWITCH_STATUS_FALSE;
 	}
 
 	if (ei_decode_atom(buf->buff, &buf->index, atom) || strncmp(atom, "is_auth", MAXATOMLEN)) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "not is_auth\n");
+		switch_safe_free(ref);
 		return SWITCH_STATUS_FALSE;
 	}
 
 	/* To ! {Tag, Reply} */
 	ei_x_encode_tuple_header(rbuf, 2);
-	ei_x_encode_ref(rbuf, &ref);
+	ei_x_append_buf(rbuf, ref, ref_len);
 	ei_x_encode_atom(rbuf, "yes");
+	switch_safe_free(ref);
 
 	switch_mutex_lock(listener->sock_mutex);
 	ei_send(listener->sockdes, &pid, rbuf->buff, rbuf->index);
@@ -1345,7 +1361,7 @@ static switch_status_t handle_net_kernel_msg(listener_t *listener, erlang_msg * 
 #ifdef EI_DEBUG
 	ei_x_print_msg(rbuf, &pid, 1);
 #endif
-
+	switch_safe_free(ref);
 	return SWITCH_STATUS_FALSE;
 }
 

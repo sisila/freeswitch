@@ -973,7 +973,7 @@ static void listener_main_loop(listener_t *listener)
 	int status = 1;
 	int msgs_sent = 0; /* how many messages we sent in a loop */
 
-	while ((status >= 0 || erl_errno == ETIMEDOUT || erl_errno == EAGAIN) && !prefs.done) {
+	while ((status >= 0 || erl_errno == ETIMEDOUT || erl_errno == EAGAIN || erl_errno == 0) && !prefs.done) {
 		erlang_msg msg;
 		ei_x_buff buf;
 		ei_x_buff rbuf;
@@ -1040,7 +1040,7 @@ static void listener_main_loop(listener_t *listener)
 			}
 			break;
 		case ERL_ERROR:
-			if (erl_errno != ETIMEDOUT && erl_errno != EAGAIN) {
+			if (erl_errno != ETIMEDOUT && erl_errno != EAGAIN && erl_errno != 0) {
 				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "erl_error: status=%d, erl_errno=%d errno=%d\n", status,  erl_errno, errno);
 			}
 			break;
@@ -2000,6 +2000,10 @@ SWITCH_MODULE_RUNTIME_FUNCTION(mod_erlang_event_runtime)
 	int clientfd;
 	switch_os_socket_t epmdfd;
 	switch_socket_t *epmd_sock = NULL;
+	int ei_init_state;
+
+	ei_init_state = ei_init();
+	switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "executing ei_init = %d", ei_init_state);
 
 	if (switch_core_new_memory_pool(&pool) != SWITCH_STATUS_SUCCESS) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "OH OH no pool\n");
